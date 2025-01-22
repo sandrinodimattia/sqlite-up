@@ -20,14 +20,6 @@ export interface MigratorEvents {
 }
 
 /**
- * Extend EventEmitter to include typed events.
- */
-declare interface Migrator {
-  on<U extends keyof MigratorEvents>(event: U, listener: MigratorEvents[U]): this;
-  emit<U extends keyof MigratorEvents>(event: U, ...args: Parameters<MigratorEvents[U]>): boolean;
-}
-
-/**
  * Options for initializing the Migrator.
  */
 export interface MigratorOptions {

@@ -108,7 +108,11 @@ export class Migrator extends EventEmitter {
       for (const file of migrationFiles) {
         const fullPath = path.join(this.migrationsDir, file);
 
-        let imported: any;
+        let imported: {
+          up: (db: Database) => void;
+          down: (db: Database) => void;
+        };
+
         try {
           // Dynamic import (ESM)
           imported = await import(fullPath);

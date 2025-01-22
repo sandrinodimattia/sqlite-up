@@ -279,7 +279,7 @@ describe('Migrator', () => {
       // Check records
       const records = db.prepare('SELECT * FROM schema_migrations ORDER BY batch ASC').all();
       expect(records).toHaveLength(2);
-      expect((records[0]! as any).batch).toBe(1);
+      expect((records[0]! as { batch: number }).batch).toBe(1);
 
       // Rollback and check records are removed
       await migrator.rollback();
@@ -389,8 +389,7 @@ describe('Migrator', () => {
       migrator.on('migrationRolledBack', (name) => events.push(`rolledback:${name}`));
       migrator.on('error', (error) => events.push(`error:${error.message}`));
 
-      const res = await migrator.migrateUp();
-      console.log(res);
+      await migrator.migrateUp();
       expect(events).toContain('applied:001_users.ts');
       expect(events).toContain('applied:002_posts.ts');
 
@@ -607,7 +606,7 @@ describe('Migrator', () => {
         prepare: () => {
           throw new Error('Database error');
         },
-      } as any;
+      } as unknown as Database;
 
       const errorMigrator = new Migrator({
         db: invalidDb,
@@ -640,7 +639,7 @@ describe('Migrator', () => {
         transaction: () => {
           throw new Error('Transaction error');
         },
-      } as any;
+      } as unknown as Database;
 
       const errorMigrator = new Migrator({
         db: errorDb,
