@@ -1,25 +1,6 @@
 import { Database } from 'better-sqlite3';
 
 /**
- * Define the types of events the Migrator can emit.
- */
-export interface MigratorEvents {
-  /**
-   * Emitted when a migration is successfully applied.
-   * @param migrationName The name of the migration applied.
-   * @param batch The batch number of the migration.
-   */
-  migrationApplied: (migrationName: string, batch: number) => void;
-
-  /**
-   * Emitted when a migration is successfully rolled back.
-   * @param migrationName The name of the migration rolled back.
-   * @param batch The batch number of the migration.
-   */
-  migrationRolledBack: (migrationName: string, batch: number) => void;
-}
-
-/**
  * Options for initializing the Migrator.
  */
 export interface MigratorOptions {

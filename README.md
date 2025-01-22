@@ -36,7 +36,7 @@ mkdir migrations
 2. Create your first migration file `migrations/001_create_users.ts`:
 
 ```typescript
-import { MigrationPlan } from 'sqlite-up';
+import { Database } from 'better-sqlite3';
 
 export const up = (db: Database): void => {
   db.exec(`
@@ -57,7 +57,7 @@ export const down = (db: Database): void => {
 3. Use the migrator in your code:
 
 ```typescript
-import Database from 'better-sqlite3';
+import { Database } from 'better-sqlite3';
 import { Migrator } from 'sqlite-up';
 
 async function main() {
@@ -69,7 +69,7 @@ async function main() {
   });
 
   // Run all pending migrations
-  const result = await migrator.migrateUp();
+  const result = await migrator.apply();
   if (result.success) {
     console.log('Applied migrations:', result.appliedMigrations);
   } else {
@@ -99,10 +99,110 @@ interface MigratorOptions {
 
 #### Methods
 
-- `migrateUp(): Promise<MigrationResult>` - Apply all pending migrations
-- `migrateDown(steps?: number): Promise<MigrationResult>` - Rollback migrations
-- `status(): Promise<MigrationStatus[]>` - Get the status of all migrations
-- `reset(): Promise<MigrationResult>` - Rollback all migrations
+##### `apply()`
+
+Apply all pending migrations.
+
+```typescript
+const migrator = new Migrator({
+  db,
+  migrationsDir: './migrations',
+});
+
+// Run all pending migrations
+const result = await migrator.apply();
+if (result.success) {
+  console.log('Applied migrations:', result.appliedMigrations);
+} else {
+  console.error('Migration failed:', result.error);
+}
+```
+
+##### `rollback()`
+
+Rollback the most recent batch of migrations.
+
+```typescript
+// Rollback the last batch of migrations
+const result = await migrator.rollback();
+if (result.success) {
+  console.log('Rolled back:', result.appliedMigrations);
+} else {
+  console.error('Rollback failed:', result.error);
+}
+```
+
+##### `status()`
+
+Get the status of all migrations. Shows which migrations have been applied and which are pending.
+
+```typescript
+const status = await migrator.status();
+console.log('Migration Status:', status);
+// Example output:
+// Migration Status: {
+//   currentBatch: 1,
+//   pending: 0,
+//   applied: [
+//     {
+//       name: '001_users_table.ts',
+//       executed_at: '2025-01-22T12:29:22.402Z',
+//       batch: 1
+//     },
+//     {
+//       name: '002_add_age.ts',
+//       executed_at: '2025-01-22T12:29:22.406Z',
+//       batch: 1
+//     }
+//   ]
+// }
+```
+
+##### `plan()`
+
+Plan the pending migrations without applying them. Returns the next batch number and the list of pending migration names in order.
+
+```typescript
+const plan = await migrator.plan();
+console.log('Migration Plan:', plan);
+// Example output:
+// Migration Plan: {
+//   nextBatch: 2,
+//   pending: ['003_add_email_index.ts']
+// }
+```
+
+##### Events
+
+The migrator extends EventEmitter and emits events during migration:
+
+```typescript
+// Listen for migration events
+migrator.on('migration:applied', function (name: string, batch: number): void {
+  console.log(`✅ Migration Applied: "${name}" in batch ${batch}`);
+});
+migrator.on('migration:rollback', function (name: string, batch: number): void {
+  console.log(`🔄 Migration Rolled Back: "${name}" from batch ${batch}`);
+});
+
+// Run migrations after setting up listeners
+await migrator.apply();
+```
+
+##### Transaction Safety
+
+All migrations are run within a transaction. If any part of a migration fails, the entire migration is rolled back:
+
+```typescript
+export const up = (db: Database): void => {
+  // Both operations will be in the same transaction
+  db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+  db.exec('CREATE INDEX idx_user_id ON users(id)');
+
+  // If any operation fails, the entire migration is rolled back
+  // and the database remains in its previous state
+};
+```
 
 ## Migration Files
 
@@ -133,7 +233,7 @@ import {
 } from 'sqlite-up';
 
 try {
-  await migrator.migrateUp();
+  await migrator.apply();
 } catch (error) {
   if (error instanceof MigrationLockError) {
     console.error('Migration failed, a different process is holding the lock:', error.message);

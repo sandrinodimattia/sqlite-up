@@ -24,7 +24,7 @@ import {
  * @example
  * const db = new Database('database.db');
  * const migrator = new Migrator({ db, migrationsDir: 'migrations' });
- * await migrator.migrateUp();
+ * await migrator.apply();
  */
 export class Migrator extends EventEmitter {
   private db: Database;
@@ -233,7 +233,7 @@ export class Migrator extends EventEmitter {
    * Apply all pending migrations in a single batch.
    * Returns the names of applied migrations.
    */
-  async migrateUp(): Promise<MigrationResult> {
+  async apply(): Promise<MigrationResult> {
     // Initialize the migrator
     try {
       await this.init();
@@ -285,7 +285,7 @@ export class Migrator extends EventEmitter {
             // Record migration
             this.recordMigration(migration.name, nextBatch);
             appliedMigrations.push(migration.name);
-            this.emit('migrationApplied', migration.name, nextBatch);
+            this.emit('migration:applied', migration.name, nextBatch);
           } catch (err) {
             throw new MigrationExecutionError(
               `Failed to rollback migration "${migration.name}"`,
@@ -374,7 +374,7 @@ export class Migrator extends EventEmitter {
             this.removeMigration(migration.name, currentBatch);
 
             appliedMigrations.push(migration.name);
-            this.emit('migrationRolledBack', migration.name, currentBatch);
+            this.emit('migration:rollback', migration.name, currentBatch);
           } catch (err) {
             throw new MigrationExecutionError(
               `Failed to rollback migration "${migration.name}"`,

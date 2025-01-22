@@ -1,7 +1,7 @@
 import os from 'os';
 import path from 'path';
 import { promises as fs } from 'fs';
-import DatabaseConstructor, { Database } from 'better-sqlite3';
+import SQLiteDatabase, { Database } from 'better-sqlite3';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import {
@@ -25,7 +25,7 @@ describe('Migrator', () => {
     await fs.mkdir(migrationsDir);
 
     // Create in-memory database
-    db = new DatabaseConstructor(':memory:');
+    db = new SQLiteDatabase(':memory:');
 
     migrator = new Migrator({
       db,
@@ -163,7 +163,7 @@ describe('Migrator', () => {
     });
 
     it('should apply migrations successfully', async () => {
-      const result = await migrator.migrateUp();
+      const result = await migrator.apply();
       expect(result.success).toBe(true);
       expect(result.appliedMigrations).toHaveLength(2);
 
@@ -185,7 +185,7 @@ describe('Migrator', () => {
         `
       );
 
-      await expect(migrator.migrateUp()).resolves.toEqual({
+      await expect(migrator.apply()).resolves.toEqual({
         success: false,
         error: expect.any(MigrationExecutionError),
         appliedMigrations: [],
@@ -194,7 +194,7 @@ describe('Migrator', () => {
 
     it('should rollback migrations', async () => {
       // First apply migrations
-      await migrator.migrateUp();
+      await migrator.apply();
 
       // Then rollback
       const result = await migrator.rollback();
@@ -215,7 +215,7 @@ describe('Migrator', () => {
       // Mock the lock to simulate another process holding it
       db.prepare(`UPDATE schema_migrations_lock SET locked = 1 WHERE id = 1`).run();
 
-      const res = await migrator.migrateUp();
+      const res = await migrator.apply();
       await expect(res.error).toBeDefined();
       await expect(res.error).toBeInstanceOf(MigrationLockError);
       await expect(res.success).toBe(false);
@@ -235,7 +235,7 @@ describe('Migrator', () => {
         `
       );
 
-      const result = await migrator.migrateUp();
+      const result = await migrator.apply();
       expect(result.success).toBe(false);
       expect(result.error).toBeInstanceOf(MigrationExecutionError);
 
@@ -248,15 +248,15 @@ describe('Migrator', () => {
 
     it('should handle lock acquisition and release', async () => {
       // First migration should acquire lock
-      const firstMigration = await migrator.migrateUp();
+      const firstMigration = await migrator.apply();
 
       // Second migration should fail to acquire lock
-      const secondMigration = await migrator.migrateUp();
+      const secondMigration = await migrator.apply();
 
       db.prepare(`UPDATE schema_migrations_lock SET locked = 1 WHERE id = 1`).run();
 
       // Third migration should fail to acquire lock
-      const thirdMigration = await migrator.migrateUp();
+      const thirdMigration = await migrator.apply();
 
       await expect(firstMigration).toEqual(expect.objectContaining({ success: true }));
       await expect(secondMigration).toEqual(
@@ -274,7 +274,7 @@ describe('Migrator', () => {
 
     it('should properly record and remove migrations', async () => {
       // Apply migrations
-      await migrator.migrateUp();
+      await migrator.apply();
 
       // Check records
       const records = db.prepare('SELECT * FROM schema_migrations ORDER BY batch ASC').all();
@@ -311,7 +311,7 @@ describe('Migrator', () => {
       expect(status.applied).toHaveLength(0);
 
       // After applying migration
-      await migrator.migrateUp();
+      await migrator.apply();
       status = await migrator.status();
       expect(status.currentBatch).toBe(1);
       expect(status.pending).toBe(0);
@@ -343,12 +343,12 @@ describe('Migrator', () => {
       const rolledBackSpy = vi.fn();
       const errorSpy = vi.fn();
 
-      migrator.on('migrationApplied', appliedSpy);
-      migrator.on('migrationRolledBack', rolledBackSpy);
+      migrator.on('migration:applied', appliedSpy);
+      migrator.on('migration:rollback', rolledBackSpy);
       migrator.on('error', errorSpy);
 
       // Apply migration
-      await migrator.migrateUp();
+      await migrator.apply();
       expect(appliedSpy).toHaveBeenCalledWith('001_test.ts', 1);
 
       // Rollback migration
@@ -385,11 +385,11 @@ describe('Migrator', () => {
       );
 
       const events: string[] = [];
-      migrator.on('migrationApplied', (name) => events.push(`applied:${name}`));
-      migrator.on('migrationRolledBack', (name) => events.push(`rolledback:${name}`));
+      migrator.on('migration:applied', (name) => events.push(`applied:${name}`));
+      migrator.on('migration:rollback', (name) => events.push(`rolledback:${name}`));
       migrator.on('error', (error) => events.push(`error:${error.message}`));
 
-      await migrator.migrateUp();
+      await migrator.apply();
       expect(events).toContain('applied:001_users.ts');
       expect(events).toContain('applied:002_posts.ts');
 
@@ -433,7 +433,7 @@ describe('Migrator', () => {
       expect(initialStatus.pending).toBe(2); // two test migrations
       expect(initialStatus.applied).toHaveLength(0);
 
-      await migrator.migrateUp();
+      await migrator.apply();
 
       const finalStatus = await migrator.status();
       expect(finalStatus.currentBatch).toBe(1);
@@ -446,7 +446,7 @@ describe('Migrator', () => {
       expect(plan.nextBatch).toBe(1);
       expect(plan.pendingMigrations).toEqual(['001_users.ts', '002_posts.ts']);
 
-      await migrator.migrateUp();
+      await migrator.apply();
 
       const emptyPlan = await migrator.plan();
       expect(emptyPlan.nextBatch).toBe(2);
@@ -466,7 +466,7 @@ describe('Migrator', () => {
       );
 
       // Attempt migration (will fail)
-      await migrator.migrateUp();
+      await migrator.apply();
 
       // Verify lock is released
       const lockStatus = db
@@ -498,7 +498,7 @@ describe('Migrator', () => {
         'export const malformed = true;' // Missing up/down functions
       );
 
-      const res = await migrator.migrateUp();
+      const res = await migrator.apply();
       await expect(res.error).toBeDefined();
       await expect(res.error).toBeInstanceOf(MigrationError);
       await expect(res.success).toBe(false);
@@ -524,7 +524,7 @@ describe('Migrator', () => {
       // Close the database to simulate connection error
       db.close();
 
-      await expect(migrator.migrateUp()).resolves.toEqual({
+      await expect(migrator.apply()).resolves.toEqual({
         success: false,
         error: expect.any(MigrationError),
         appliedMigrations: [],
@@ -555,7 +555,7 @@ describe('Migrator', () => {
         `
       );
 
-      const result = await migrator.migrateUp();
+      const result = await migrator.apply();
       expect(result.success).toBe(false);
       expect(result.error).toBeInstanceOf(MigrationExecutionError);
       expect(result.appliedMigrations).toHaveLength(0);
@@ -586,7 +586,7 @@ describe('Migrator', () => {
         );
       }
 
-      const result = await migrator.migrateUp();
+      const result = await migrator.apply();
       expect(result.success).toBe(true);
       expect(result.appliedMigrations).toHaveLength(10);
 
@@ -654,7 +654,7 @@ describe('Migrator', () => {
         `
       );
 
-      const result = await errorMigrator.migrateUp();
+      const result = await errorMigrator.apply();
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
     });
