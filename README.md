@@ -250,7 +250,7 @@ The library provides specific error classes for different scenarios:
 
 ## Examples
 
-Check out the [example directory](./example) for complete working examples.
+Check out the [example directory](https://github.com/sandrinodimattia/sqlite-up/tree/main/example) for complete working examples.
 
 ## Contributing
 
