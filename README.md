@@ -255,7 +255,7 @@ Check out the [example directory](https://github.com/sandrinodimattia/sqlite-up/
 
 ## FAQ
 
-## When running migrations as part of Vitest I get the following error: TypeError: Unknown file extension ".ts"
+### When running migrations as part of Vitest I get the following error: TypeError: Unknown file extension ".ts"
 
 This happens due to how module resolution works in Vitest. To work around this, you can add a `setupFile` to your `vitest.setup.ts` file:
 
