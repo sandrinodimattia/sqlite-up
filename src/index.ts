@@ -33,6 +33,7 @@ export class Migrator extends EventEmitter {
   private lockTable: string;
   private migrations: Migration[] = [];
   private initialized = false;
+  private fileExtensions: string[];
 
   constructor(options: MigratorOptions) {
     super();
@@ -41,6 +42,7 @@ export class Migrator extends EventEmitter {
     this.migrationsDir = options.migrationsDir;
     this.migrationsTable = options.migrationsTable ?? 'schema_migrations';
     this.lockTable = options.migrationsLockTable ?? 'schema_migrations_lock';
+    this.fileExtensions = options.fileExtensions ?? ['ts', 'js'];
   }
 
   /**
@@ -92,7 +94,7 @@ export class Migrator extends EventEmitter {
   }
 
   /**
-   * Load migration files (.js/.ts) from the `migrationsDir`.
+   * Load migration files from the `migrationsDir`.
    * Migration files must export { up, down }.
    * The migrations are loaded in alphabetical order.
    */
@@ -101,7 +103,14 @@ export class Migrator extends EventEmitter {
       const entries = await fs.readdir(this.migrationsDir);
       // Filter and sort migration files alphabetically
       const migrationFiles = entries
-        .filter((file) => file.endsWith('.ts') || file.endsWith('.js'))
+        .filter((file) => {
+          // Ignore .d.ts files
+          if (file.endsWith('.d.ts')) {
+            return false;
+          }
+          // Check if file has one of the allowed extensions
+          return this.fileExtensions.some((ext) => file.endsWith(`.${ext}`));
+        })
         .sort();
 
       const loadedMigrations: Migration[] = [];

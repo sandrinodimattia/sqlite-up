@@ -94,6 +94,7 @@ interface MigratorOptions {
   migrationsDir: string; // Directory containing migration files
   migrationsTable?: string; // Optional: Table name for tracking migrations (default: 'schema_migrations')
   migrationsLockTable?: string; // Optional: Table name for migration locks (default: 'schema_migrations_lock')
+  fileExtensions?: string[]; // Optional: File extensions to look for (default: ['ts', 'js']). Note: .d.ts files are always ignored
 }
 ```
 
@@ -251,6 +252,41 @@ The library provides specific error classes for different scenarios:
 ## Examples
 
 Check out the [example directory](https://github.com/sandrinodimattia/sqlite-up/tree/main/example) for complete working examples.
+
+## FAQ
+
+## When running migrations as part of Vitest I get the following error: TypeError: Unknown file extension ".ts"
+
+This happens due to how module resolution works in Vitest. To work around this, you can add a `setupFile` to your `vitest.setup.ts` file:
+
+```typescript
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    environment: 'node',
+    reporters: ['verbose'],
+    include: ['src/**/*.test.ts'],
+    coverage: {
+      reporter: ['text', 'json', 'html'],
+    },
+    setupFiles: ['./vitest.setup.ts'],
+  },
+});
+```
+
+Then in your `vitest.setup.ts` file, register the TypeScript loader:
+
+```typescript
+import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
+
+// Register TypeScript loader
+register('ts-node/esm', pathToFileURL('./'));
+
+// This will ensure .ts files are properly loaded
+process.env.NODE_OPTIONS = '--loader ts-node/esm';
+```
 
 ## Contributing
 

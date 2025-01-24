@@ -659,4 +659,92 @@ describe('Migrator', () => {
       expect(result.error).toBeDefined();
     });
   });
+
+  describe('file extensions', () => {
+    beforeEach(async () => {
+      // Create test migrations with different extensions
+      await fs.writeFile(
+        path.join(migrationsDir, '001_users.ts'),
+        `
+        export function up(db) {
+          db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+        }
+        export function down(db) {
+          db.exec('DROP TABLE users');
+        }
+        `
+      );
+
+      await fs.writeFile(
+        path.join(migrationsDir, '002_posts.js'),
+        `
+        export function up(db) {
+          db.exec('CREATE TABLE posts (id INTEGER PRIMARY KEY)');
+        }
+        export function down(db) {
+          db.exec('DROP TABLE posts');
+        }
+        `
+      );
+
+      await fs.writeFile(
+        path.join(migrationsDir, '003_comments.mjs'),
+        `
+        export function up(db) {
+          db.exec('CREATE TABLE comments (id INTEGER PRIMARY KEY)');
+        }
+        export function down(db) {
+          db.exec('DROP TABLE comments');
+        }
+        `
+      );
+
+      await fs.writeFile(
+        path.join(migrationsDir, '004_types.d.ts'),
+        `
+        export interface User {
+          id: number;
+        }
+        `
+      );
+    });
+
+    it('should load ts and js files by default and ignore .d.ts', async () => {
+      const plan = await migrator.plan();
+      expect(plan.pendingMigrations).toEqual(['001_users.ts', '002_posts.js']);
+    });
+
+    it('should respect custom file extensions', async () => {
+      const customMigrator = new Migrator({
+        db,
+        migrationsDir,
+        fileExtensions: ['mjs'],
+      });
+
+      const plan = await customMigrator.plan();
+      expect(plan.pendingMigrations).toEqual(['003_comments.mjs']);
+    });
+
+    it('should always ignore .d.ts files even if ts is specified', async () => {
+      const customMigrator = new Migrator({
+        db,
+        migrationsDir,
+        fileExtensions: ['ts'],
+      });
+
+      const plan = await customMigrator.plan();
+      expect(plan.pendingMigrations).toEqual(['001_users.ts']);
+    });
+
+    it('should handle multiple custom extensions', async () => {
+      const customMigrator = new Migrator({
+        db,
+        migrationsDir,
+        fileExtensions: ['js', 'mjs'],
+      });
+
+      const plan = await customMigrator.plan();
+      expect(plan.pendingMigrations).toEqual(['002_posts.js', '003_comments.mjs']);
+    });
+  });
 });

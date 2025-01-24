@@ -23,6 +23,12 @@ export interface MigratorOptions {
    * Name of the migrations lock table (default: schema_migrations_lock)
    */
   migrationsLockTable?: string;
+
+  /**
+   * File extensions to look for when loading migrations (default: ['ts', 'js'])
+   * Note: .d.ts files are always ignored
+   */
+  fileExtensions?: string[];
 }
 
 /**
