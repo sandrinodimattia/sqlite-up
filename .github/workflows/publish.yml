@@ -1,8 +1,12 @@
 name: Publish to NPM
 
 on:
-  release:
-    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g., 1.0.0)"
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -42,6 +46,23 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Validate version
+        run: |
+          if ! [[ "${{ github.event.inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "Invalid version format. Please use semantic versioning (e.g., 1.0.0 or 1.0.0-beta.1)"
+            exit 1
+          fi
+
+      - name: Update package version
+        run: |
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add package.json
+          git commit -m "release: ${{ github.event.inputs.version }}"
+          git tag v${{ github.event.inputs.version }}
+          git push origin main --tags
 
       - name: Publish to NPM
         shell: bash
