@@ -40,6 +40,7 @@ build/Release
 
 # Dependency directories
 node_modules/
+.pnpm-store/
 jspm_packages/
 
 # Snowpack dependency directory (https://snowpack.dev/)
@@ -137,3 +138,6 @@ dist
 
 # OS
 .DS_Store
+
+# Example databases
+*.sqlite

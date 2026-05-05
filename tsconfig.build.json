@@ -1,0 +1,34 @@
+{
+  // Inherit shared TypeScript compiler options
+  "extends": "./tsconfig.json",
+
+  // TypeScript compiler options
+  "compilerOptions": {
+    // Specify the root directory of input files
+    "rootDir": "src",
+
+    // Redirect output structure to the directory
+    "outDir": "dist",
+
+    // Only emit .d.ts declaration files
+    "emitDeclarationOnly": true,
+
+    // Generate .d.ts declaration files
+    "declaration": true,
+
+    // Create sourcemaps for d.ts files
+    "declarationMap": true,
+
+    // Disable JavaScript source maps for build output
+    "sourceMap": false,
+
+    // Allow TypeScript to emit build output
+    "noEmit": false
+  },
+
+  // Specify files to include in compilation
+  "include": ["src/**/*.ts"],
+
+  // Specify files to exclude from compilation
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}

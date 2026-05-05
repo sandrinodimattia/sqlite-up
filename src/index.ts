@@ -1,44 +1,72 @@
-import path from 'path';
-import { promises as fs } from 'fs';
-import { EventEmitter } from 'events';
-
-import { Database } from 'better-sqlite3';
-
-import {
+import { EventEmitter } from 'node:events';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { MigrationError, MigrationExecutionError, MigrationFileError, MigrationLockError } from './errors.js';
+import { createSqliteProvider, type SqliteProvider } from './providers/index.js';
+import type {
+  MaybePromise,
   Migration,
   MigrationPlan,
   MigrationRecord,
   MigrationResult,
-  MigratorOptions,
   MigrationStatus,
-} from './types';
-import {
-  MigrationExecutionError,
-  MigrationFileError,
-  MigrationLockError,
-  MigrationError,
-} from './errors.js';
+  MigratorOptions,
+  SqliteDatabase,
+} from './types.js';
 
 /**
  * Migration provider for SQLite databases.
  * @example
- * const db = new Database('database.db');
+ * const db = new DatabaseSync('database.db');
  * const migrator = new Migrator({ db, migrationsDir: 'migrations' });
  * await migrator.apply();
  */
 export class Migrator extends EventEmitter {
-  private db: Database;
+  /**
+   * Driver-specific provider normalized to the sqlite-up database surface.
+   */
+  private provider: SqliteProvider;
+
+  /**
+   * Database handle used by migrations and internal bookkeeping queries.
+   */
+  private db: SqliteDatabase;
+
+  /**
+   * Directory where migration modules are loaded from.
+   */
   private migrationsDir: string;
+
+  /**
+   * Table that records successfully applied migrations.
+   */
   private migrationsTable: string;
+
+  /**
+   * Table that stores the single-row migration lock.
+   */
   private lockTable: string;
+
+  /**
+   * Migration modules loaded from disk in execution order.
+   */
   private migrations: Migration[] = [];
+
+  /**
+   * Whether internal tables and migration files have already been initialized.
+   */
   private initialized = false;
+
+  /**
+   * File extensions considered when loading migration modules.
+   */
   private fileExtensions: string[];
 
   constructor(options: MigratorOptions) {
     super();
 
-    this.db = options.db;
+    this.provider = createSqliteProvider(options.db);
+    this.db = this.provider.db;
     this.migrationsDir = options.migrationsDir;
     this.migrationsTable = options.migrationsTable ?? 'schema_migrations';
     this.lockTable = options.migrationsLockTable ?? 'schema_migrations_lock';
@@ -66,7 +94,7 @@ export class Migrator extends EventEmitter {
   private async initTables(): Promise<void> {
     try {
       // Create the migrations table if it doesn't exist
-      this.db.exec(`
+      await this.db.exec(`
         CREATE TABLE IF NOT EXISTS ${this.migrationsTable} (
           name TEXT PRIMARY KEY,
           executed_at TEXT NOT NULL,   -- ISO string
@@ -75,7 +103,7 @@ export class Migrator extends EventEmitter {
       `);
 
       // Create the lock table if it doesn't exist
-      this.db.exec(`
+      await this.db.exec(`
         CREATE TABLE IF NOT EXISTS ${this.lockTable} (
           id INTEGER PRIMARY KEY CHECK (id = 1),
           locked INTEGER NOT NULL DEFAULT 0
@@ -83,7 +111,7 @@ export class Migrator extends EventEmitter {
       `);
 
       // Ensure exactly one row in the lock table (id=1)
-      this.db.exec(`
+      await this.db.exec(`
         INSERT OR IGNORE INTO ${this.lockTable} (id, locked) VALUES (1, 0)
       `);
 
@@ -118,25 +146,20 @@ export class Migrator extends EventEmitter {
         const fullPath = path.join(this.migrationsDir, file);
 
         let imported: {
-          up: (db: Database) => void;
-          down: (db: Database) => void;
+          up: (db: SqliteDatabase) => MaybePromise<void>;
+          down: (db: SqliteDatabase) => MaybePromise<void>;
         };
 
         try {
           // Dynamic import (ESM)
           imported = await import(fullPath);
         } catch (err) {
-          throw new MigrationFileError(
-            `Error loading migration "${file}": ${String(err)}`,
-            err as Error
-          );
+          throw new MigrationFileError(`Error loading migration "${file}": ${String(err)}`, err as Error);
         }
 
         const { up, down } = imported;
         if (typeof up !== 'function' || typeof down !== 'function') {
-          throw new MigrationFileError(
-            `Migration "${file}" must export "up" and "down" functions.`
-          );
+          throw new MigrationFileError(`Migration "${file}" must export "up" and "down" functions.`);
         }
 
         loadedMigrations.push({ name: file, up, down });
@@ -145,9 +168,7 @@ export class Migrator extends EventEmitter {
       // Only update migrations array after all files are loaded successfully
       this.migrations = loadedMigrations;
     } catch (err) {
-      throw err instanceof MigrationFileError
-        ? err
-        : new MigrationFileError('Failed to load migrations', err as Error);
+      throw err instanceof MigrationFileError ? err : new MigrationFileError('Failed to load migrations', err as Error);
     }
   }
 
@@ -155,21 +176,19 @@ export class Migrator extends EventEmitter {
    * Acquire a lock to prevent concurrent migrations.
    * Throws an error if the lock is already held.
    */
-  private acquireLock(): void {
-    const transaction = this.db.transaction(() => {
-      const row = this.db.prepare(`SELECT locked FROM ${this.lockTable} WHERE id = 1`).get() as {
-        locked: number;
-      };
-
-      if (row.locked === 1) {
-        throw new MigrationLockError('Migration lock already held by another process.');
-      }
-
-      this.db.prepare(`UPDATE ${this.lockTable} SET locked = 1 WHERE id = 1`).run();
-    });
-
+  private async acquireLock(): Promise<void> {
     try {
-      transaction();
+      await this.runTransaction(async () => {
+        const row = (await this.db.prepare(`SELECT locked FROM ${this.lockTable} WHERE id = 1`).get()) as {
+          locked: number;
+        };
+
+        if (row.locked === 1) {
+          throw new MigrationLockError('Migration lock already held by another process.');
+        }
+
+        await this.db.prepare(`UPDATE ${this.lockTable} SET locked = 1 WHERE id = 1`).run();
+      });
     } catch (err) {
       if (err instanceof MigrationLockError) {
         throw err;
@@ -182,9 +201,9 @@ export class Migrator extends EventEmitter {
   /**
    * Release the migration lock.
    */
-  private releaseLock(): void {
+  private async releaseLock(): Promise<void> {
     try {
-      this.db.prepare(`UPDATE ${this.lockTable} SET locked = 0 WHERE id = 1`).run();
+      await this.db.prepare(`UPDATE ${this.lockTable} SET locked = 0 WHERE id = 1`).run();
     } catch (err) {
       throw new MigrationLockError('Failed to release migration lock', err as Error);
     }
@@ -193,19 +212,19 @@ export class Migrator extends EventEmitter {
   /**
    * Get the highest batch number.
    */
-  private getCurrentBatch(): number {
-    const row = this.db
-      .prepare(`SELECT MAX(batch) as batch FROM ${this.migrationsTable}`)
-      .get() as { batch: number | null };
+  private async getCurrentBatch(): Promise<number> {
+    const row = (await this.db.prepare(`SELECT MAX(batch) as batch FROM ${this.migrationsTable}`).get()) as {
+      batch: number | null;
+    };
     return row?.batch ?? 0;
   }
 
   /**
    * Insert a record for an applied migration.
    */
-  private recordMigration(name: string, batch: number): void {
+  private async recordMigration(name: string, batch: number): Promise<void> {
     const executedAt = new Date().toISOString();
-    this.db
+    await this.db
       .prepare(
         `
         INSERT INTO ${this.migrationsTable} (name, executed_at, batch)
@@ -218,8 +237,8 @@ export class Migrator extends EventEmitter {
   /**
    * Delete a record for a migration that is being rolled back.
    */
-  private removeMigration(name: string, batch: number): void {
-    this.db
+  private async removeMigration(name: string, batch: number): Promise<void> {
+    await this.db
       .prepare(
         `
         DELETE FROM ${this.migrationsTable}
@@ -233,9 +252,8 @@ export class Migrator extends EventEmitter {
    * Run SQL operations in a transaction.
    * @param fn The function to run in the transaction.
    */
-  private runTransaction(fn: () => void): void {
-    const transaction = this.db.transaction(fn);
-    transaction();
+  private async runTransaction(fn: () => MaybePromise<void>): Promise<void> {
+    await this.provider.transaction(fn);
   }
 
   /**
@@ -256,7 +274,7 @@ export class Migrator extends EventEmitter {
 
     // Acquire lock
     try {
-      this.acquireLock();
+      await this.acquireLock();
     } catch (err) {
       return {
         success: false,
@@ -267,15 +285,14 @@ export class Migrator extends EventEmitter {
 
     const appliedMigrations: string[] = [];
     try {
-      const currentBatch = this.getCurrentBatch();
+      const currentBatch = await this.getCurrentBatch();
       const nextBatch = currentBatch + 1;
 
       // Determine pending migrations: not present in schema_migrations
       const appliedNames = new Set(
-        this.db
-          .prepare(`SELECT name FROM ${this.migrationsTable}`)
-          .all()
-          .map((row) => (row as { name: string }).name)
+        (await this.db.prepare(`SELECT name FROM ${this.migrationsTable}`).all()).map(
+          (row) => (row as { name: string }).name
+        )
       );
 
       // Get pending migrations, if any
@@ -285,24 +302,25 @@ export class Migrator extends EventEmitter {
       }
 
       // Perform the migration
-      this.runTransaction(() => {
+      await this.runTransaction(async () => {
         for (const migration of pendingMigrations) {
           try {
             // Apply migration
-            migration.up(this.db);
+            await migration.up(this.db);
 
             // Record migration
-            this.recordMigration(migration.name, nextBatch);
+            await this.recordMigration(migration.name, nextBatch);
             appliedMigrations.push(migration.name);
-            this.emit('migration:applied', migration.name, nextBatch);
           } catch (err) {
-            throw new MigrationExecutionError(
-              `Failed to rollback migration "${migration.name}"`,
-              err as Error
-            );
+            throw new MigrationExecutionError(`Failed to apply migration "${migration.name}"`, err as Error);
           }
         }
       });
+
+      for (const migrationName of appliedMigrations) {
+        this.emit('migration:applied', migrationName, nextBatch);
+      }
+
       return { success: true, appliedMigrations };
     } catch (error) {
       const err =
@@ -311,7 +329,7 @@ export class Migrator extends EventEmitter {
           : new MigrationExecutionError('Migration failed', error as Error);
       return { success: false, error: err, appliedMigrations: [] };
     } finally {
-      this.releaseLock();
+      await this.releaseLock();
     }
   }
 
@@ -333,7 +351,7 @@ export class Migrator extends EventEmitter {
 
     // Acquire lock
     try {
-      this.acquireLock();
+      await this.acquireLock();
     } catch (err) {
       return {
         success: false,
@@ -345,13 +363,13 @@ export class Migrator extends EventEmitter {
     const appliedMigrations: string[] = [];
     try {
       // Check if there are migrations to rollback
-      const currentBatch = this.getCurrentBatch();
+      const currentBatch = await this.getCurrentBatch();
       if (currentBatch === 0) {
         return { success: true, appliedMigrations };
       }
 
       // Get migrations in the last batch, sorted descending
-      const rows = this.db
+      const rows = (await this.db
         .prepare(
           `
           SELECT name
@@ -360,7 +378,7 @@ export class Migrator extends EventEmitter {
           ORDER BY name DESC
         `
         )
-        .all(currentBatch) as { name: string }[];
+        .all(currentBatch)) as { name: string }[];
 
       // No migrations found in the last batch
       if (rows.length === 0) {
@@ -368,7 +386,7 @@ export class Migrator extends EventEmitter {
       }
 
       // Perform the rollback
-      this.runTransaction(() => {
+      await this.runTransaction(async () => {
         for (const row of rows) {
           const migration = this.migrations.find((m) => m.name === row.name);
           if (!migration) {
@@ -377,21 +395,21 @@ export class Migrator extends EventEmitter {
 
           try {
             // Revert migration
-            migration.down(this.db);
+            await migration.down(this.db);
 
             // Remove migration record
-            this.removeMigration(migration.name, currentBatch);
+            await this.removeMigration(migration.name, currentBatch);
 
             appliedMigrations.push(migration.name);
-            this.emit('migration:rollback', migration.name, currentBatch);
           } catch (err) {
-            throw new MigrationExecutionError(
-              `Failed to rollback migration "${migration.name}"`,
-              err as Error
-            );
+            throw new MigrationExecutionError(`Failed to rollback migration "${migration.name}"`, err as Error);
           }
         }
       });
+
+      for (const migrationName of appliedMigrations) {
+        this.emit('migration:rollback', migrationName, currentBatch);
+      }
 
       return { success: true, appliedMigrations };
     } catch (error) {
@@ -399,9 +417,9 @@ export class Migrator extends EventEmitter {
         error instanceof MigrationExecutionError
           ? error
           : new MigrationExecutionError('Rollback failed', error as Error);
-      return { success: false, error: err, appliedMigrations };
+      return { success: false, error: err, appliedMigrations: [] };
     } finally {
-      this.releaseLock();
+      await this.releaseLock();
     }
   }
 
@@ -416,10 +434,10 @@ export class Migrator extends EventEmitter {
     await this.init();
 
     try {
-      const currentBatch = this.getCurrentBatch();
+      const currentBatch = await this.getCurrentBatch();
 
       // Get all applied migrations
-      const rows = this.db
+      const rows = (await this.db
         .prepare(
           `
           SELECT name, executed_at, batch
@@ -427,7 +445,7 @@ export class Migrator extends EventEmitter {
           ORDER BY batch ASC, name ASC
         `
         )
-        .all() as MigrationRecord[];
+        .all()) as MigrationRecord[];
 
       // Determine pending migrations
       const appliedNames = new Set(rows.map((r) => r.name));
@@ -451,20 +469,17 @@ export class Migrator extends EventEmitter {
     await this.init();
 
     try {
-      const currentBatch = this.getCurrentBatch();
+      const currentBatch = await this.getCurrentBatch();
       const nextBatch = currentBatch + 1;
 
       // Determine pending migrations: not present in schema_migrations
       const appliedNames = new Set(
-        this.db
-          .prepare(`SELECT name FROM ${this.migrationsTable}`)
-          .all()
-          .map((row) => (row as { name: string }).name)
+        (await this.db.prepare(`SELECT name FROM ${this.migrationsTable}`).all()).map(
+          (row) => (row as { name: string }).name
+        )
       );
 
-      const pendingMigrations = this.migrations
-        .filter((m) => !appliedNames.has(m.name))
-        .map((m) => m.name);
+      const pendingMigrations = this.migrations.filter((m) => !appliedNames.has(m.name)).map((m) => m.name);
 
       return {
         nextBatch,
@@ -476,4 +491,24 @@ export class Migrator extends EventEmitter {
   }
 }
 
-export { MigratorOptions, MigrationResult, MigrationRecord, MigrationPlan, MigrationStatus };
+export {
+  MigrationError,
+  MigrationExecutionError,
+  MigrationFileError,
+  MigrationLockError,
+} from './errors.js';
+export type {
+  BunSqliteDatabase,
+  MaybePromise,
+  Migration,
+  MigrationPlan,
+  MigrationRecord,
+  MigrationResult,
+  MigrationStatus,
+  MigratorDatabase,
+  MigratorOptions,
+  SqliteDatabase,
+  SqliteRunResult,
+  SqliteStatement,
+  SqliteTransaction,
+} from './types.js';

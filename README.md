@@ -4,7 +4,7 @@
 [![TypeScript](https://img.shields.io/badge/%3C%2F%3E-TypeScript-%230074c1.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A lightweight SQLite migration system for Node.js, built with TypeScript. Manage your SQLite database schema changes with ease and confidence.
+A lightweight SQLite migration system for Node.js and Bun, built with TypeScript. Manage your SQLite database schema changes with ease and confidence.
 
 ## Features
 
@@ -14,15 +14,18 @@ A lightweight SQLite migration system for Node.js, built with TypeScript. Manage
 - 🔄 Supports migrations and rollbacks
 - 📊 Migration status tracking
 - 🔐 Transaction-safe migrations
+- 🧩 Works with Node 24+ `node:sqlite`, Bun `bun:sqlite`, Bun `SQL`, optional `better-sqlite3`, and compatible SQLite clients
 
 ## Installation
 
+Requires Node.js 24+ or Bun.
+
 ```bash
-npm install sqlite-up better-sqlite3
+npm install sqlite-up
 # or
-yarn add sqlite-up better-sqlite3
+yarn add sqlite-up
 # or
-pnpm add sqlite-up better-sqlite3
+pnpm add sqlite-up
 ```
 
 ## Quick Start
@@ -36,10 +39,10 @@ mkdir migrations
 2. Create your first migration file `migrations/001_create_users.ts`:
 
 ```typescript
-import { Database } from 'better-sqlite3';
+import type { SqliteDatabase } from 'sqlite-up';
 
-export const up = (db: Database): void => {
-  db.exec(`
+export const up = async (db: SqliteDatabase): Promise<void> => {
+  await db.exec(`
     CREATE TABLE users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       email TEXT NOT NULL UNIQUE,
@@ -49,19 +52,19 @@ export const up = (db: Database): void => {
   `);
 };
 
-export const down = (db: Database): void => {
-  db.exec('DROP TABLE users');
+export const down = async (db: SqliteDatabase): Promise<void> => {
+  await db.exec('DROP TABLE users');
 };
 ```
 
 3. Use the migrator in your code:
 
 ```typescript
-import { Database } from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { Migrator } from 'sqlite-up';
 
 async function main() {
-  const db = new Database('myapp.db');
+  const db = new DatabaseSync('myapp.db');
 
   const migrator = new Migrator({
     db,
@@ -80,6 +83,57 @@ async function main() {
 main().catch(console.error);
 ```
 
+### Bun
+
+The same migrator accepts Bun's synchronous `bun:sqlite` database:
+
+```typescript
+import { Database } from 'bun:sqlite';
+import { Migrator } from 'sqlite-up';
+
+const db = new Database('myapp.db', { create: true });
+const migrator = new Migrator({
+  db,
+  migrationsDir: './migrations',
+});
+
+await migrator.apply();
+```
+
+It also accepts Bun's Promise-based `SQL` SQLite client:
+
+```typescript
+import { SQL } from 'bun';
+import { Migrator } from 'sqlite-up';
+
+const sql = new SQL('sqlite://myapp.db');
+const migrator = new Migrator({
+  db: sql,
+  migrationsDir: './migrations',
+});
+
+await migrator.apply();
+```
+
+When using Bun `SQL`, write migration files as `async` functions and `await` database calls.
+
+### better-sqlite3
+
+If your project already uses `better-sqlite3`, pass its database instance directly. `sqlite-up` does not install it or require it as a peer dependency, so install `better-sqlite3` in your application if you use this provider.
+
+```typescript
+import Database from 'better-sqlite3';
+import { Migrator } from 'sqlite-up';
+
+const db = new Database('myapp.db');
+const migrator = new Migrator({
+  db,
+  migrationsDir: './migrations',
+});
+
+await migrator.apply();
+```
+
 ## API Reference
 
 ### `Migrator`
@@ -90,7 +144,7 @@ The main class for managing migrations.
 
 ```typescript
 interface MigratorOptions {
-  db: Database; // better-sqlite3 database instance
+  db: MigratorDatabase; // Node DatabaseSync, Bun Database, Bun SQL, better-sqlite3, or compatible SQLite instance
   migrationsDir: string; // Directory containing migration files
   migrationsTable?: string; // Optional: Table name for tracking migrations (default: 'schema_migrations')
   migrationsLockTable?: string; // Optional: Table name for migration locks (default: 'schema_migrations_lock')
@@ -169,7 +223,7 @@ console.log('Migration Plan:', plan);
 // Example output:
 // Migration Plan: {
 //   nextBatch: 2,
-//   pending: ['003_add_email_index.ts']
+//   pendingMigrations: ['003_add_email_index.ts']
 // }
 ```
 
@@ -192,52 +246,60 @@ await migrator.apply();
 
 ##### Transaction Safety
 
-All migrations are run within a transaction. If any part of a migration fails, the entire migration is rolled back:
+All pending migrations in one `apply()` call run in a single transaction. If any part of a migration fails, the entire batch is rolled back:
 
 ```typescript
-export const up = (db: Database): void => {
+import type { SqliteDatabase } from 'sqlite-up';
+
+export const up = async (db: SqliteDatabase): Promise<void> => {
   // Both operations will be in the same transaction
-  db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY)');
-  db.exec('CREATE INDEX idx_user_id ON users(id)');
+  await db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+  await db.exec('CREATE INDEX idx_user_id ON users(id)');
 
   // If any operation fails, the entire migration is rolled back
   // and the database remains in its previous state
 };
 ```
 
+For synchronous SQLite clients such as Node `DatabaseSync`, Bun `Database`, `better-sqlite3`, and compatible `exec`/`prepare` clients, `sqlite-up` uses explicit `BEGIN IMMEDIATE` transactions so async migration functions are still awaited before commit or rollback. For Bun `SQL`, `sqlite-up` uses Bun SQL's native async transaction support when available.
+
 ## Migration Files
 
 Migration files should be TypeScript or JavaScript files that export `up` and `down` functions:
 
 ```typescript
-import { Database } from 'better-sqlite3';
+import type { SqliteDatabase } from 'sqlite-up';
 
-export const up = (db: Database): void => {
+export const up = async (db: SqliteDatabase): Promise<void> => {
   // Migration code here
 };
 
-export const down = (db: Database): void => {
+export const down = async (db: SqliteDatabase): Promise<void> => {
   // Rollback code here
 };
 ```
 
 Files should be named using the format: `XXX_description.ts` where XXX is a sequence number (e.g., `001_`, `002_`).
 
+The migrator loads migration files with dynamic `import()`. Bun can load TypeScript migrations directly. In Node.js, run your migration script with a TypeScript runtime such as `tsx`, or compile migrations to JavaScript and use `.js` migration files. You can also customize loaded extensions with `fileExtensions`; `.d.ts` files are always ignored.
+
 ## Error Handling
 
 ```typescript
 import {
-  SqliteUpError, // Base error class
+  MigrationError, // Base error class
   MigrationFileError, // Issues with migration files
   MigrationLockError, // Locking-related errors
   MigrationExecutionError, // Errors during migration execution
 } from 'sqlite-up';
 
-try {
-  await migrator.apply();
-} catch (error) {
-  if (error instanceof MigrationLockError) {
-    console.error('Migration failed, a different process is holding the lock:', error.message);
+const result = await migrator.apply();
+
+if (!result.success) {
+  if (result.error instanceof MigrationLockError) {
+    console.error('Migration failed, a different process is holding the lock:', result.error.message);
+  } else {
+    console.error('Migration failed:', result.error?.message);
   }
 }
 ```
@@ -251,13 +313,27 @@ The library provides specific error classes for different scenarios:
 
 ## Examples
 
-Check out the [example directory](https://github.com/sandrinodimattia/sqlite-up/tree/main/example) for complete working examples.
+Check out the [examples directory](https://github.com/sandrinodimattia/sqlite-up/tree/main/examples) for complete working examples.
 
 ## FAQ
 
-### When running migrations as part of Vitest I get the following error: TypeError: Unknown file extension ".ts"
+### When running migrations as part of Vitest I get `TypeError: Unknown file extension ".ts"`
 
-This happens due to how module resolution works in Vitest. To work around this, you can add a `setupFile` to your `vitest.setup.ts` file:
+This happens when a migration file is dynamically imported at runtime but the process loading it is not configured to handle TypeScript. Vitest can transform test files, but dynamically imported migration files may still need to be inside Vitest's transform path or loaded through a TypeScript-aware runtime.
+
+If your tests use TypeScript migration files, run the tests with Vitest as the test runner and keep the migrations in a location Vitest can transform. If the migrations are generated into a temporary directory or loaded by a helper process that runs plain Node.js, either write the test migrations as `.js` files or run that helper through a TypeScript loader such as `tsx` or `ts-node/esm`.
+
+```bash
+pnpm exec vitest run
+
+# or, for a standalone migration helper used by tests
+pnpm exec tsx migrate.ts
+
+# or, with ts-node's ESM loader
+node --loader ts-node/esm migrate.ts
+```
+
+If you prefer to register the ESM loader from Vitest setup, add a setup file:
 
 ```typescript
 import { defineConfig } from 'vitest/config';
@@ -265,28 +341,31 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    reporters: ['verbose'],
-    include: ['src/**/*.test.ts'],
-    coverage: {
-      reporter: ['text', 'json', 'html'],
-    },
     setupFiles: ['./vitest.setup.ts'],
   },
 });
 ```
 
-Then in your `vitest.setup.ts` file, register the TypeScript loader:
+Then register the TypeScript loader in `vitest.setup.ts`:
 
 ```typescript
 import { register } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
-// Register TypeScript loader
 register('ts-node/esm', pathToFileURL('./'));
-
-// This will ensure .ts files are properly loaded
-process.env.NODE_OPTIONS = '--loader ts-node/esm';
 ```
+
+### Why do I get `TypeError: Unknown file extension ".ts"` in Node.js?
+
+`sqlite-up` loads migrations with dynamic `import()`, so Node.js needs a loader that understands TypeScript migration files. Run your migration entry point with a TypeScript runtime such as `tsx`, use an ESM loader such as `ts-node/esm`, or compile migrations to JavaScript before running them with plain Node.js.
+
+```bash
+pnpm exec tsx migrate.ts
+# or
+node --loader ts-node/esm migrate.ts
+```
+
+For production deployments that run plain Node.js, prefer compiled `.js` migrations and point `migrationsDir` at the compiled migration output.
 
 ## Contributing
 
@@ -299,11 +378,23 @@ pnpm install
 # Run tests
 pnpm test
 
+# Run Bun provider tests
+pnpm test:bun
+
 # Run tests with coverage
 pnpm test:coverage
 
+# Type check
+pnpm typecheck
+
 # Build the project
 pnpm build
+
+# Check formatting and lint rules
+pnpm check
+
+# Apply safe and unsafe Biome fixes locally
+pnpm check:fix
 
 # Lint the code
 pnpm lint
