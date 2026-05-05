@@ -1,0 +1,25 @@
+{
+  // Inherit shared TypeScript compiler options
+  "extends": "./tsconfig.json",
+
+  // TypeScript compiler options
+  "compilerOptions": {
+    // Disable .d.ts declaration file generation
+    "declaration": false,
+
+    // Disable sourcemaps for d.ts files
+    "declarationMap": false,
+
+    // Disable emitting build output during tests
+    "noEmit": true,
+
+    // Include Node.js, Vitest, and Bun global types
+    "types": ["node", "vitest", "bun"]
+  },
+
+  // Specify files to include in compilation
+  "include": ["src/**/*.ts"],
+
+  // Specify files to exclude from compilation
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,19 +1,16 @@
-import os from 'os';
-import path from 'path';
-import { promises as fs } from 'fs';
-import SQLiteDatabase, { Database } from 'better-sqlite3';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import Database from 'better-sqlite3';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  MigrationFileError,
-  MigrationLockError,
-  MigrationExecutionError,
-  MigrationError,
-} from './errors';
+import { MigrationError, MigrationExecutionError, MigrationFileError, MigrationLockError } from './errors';
 import { Migrator } from './index';
+import type { SqliteDatabase } from './types';
 
 describe('Migrator', () => {
-  let db: Database;
+  let db: DatabaseSync;
   let migrationsDir: string;
   let migrator: Migrator;
   let tempDir: string;
@@ -25,7 +22,7 @@ describe('Migrator', () => {
     await fs.mkdir(migrationsDir);
 
     // Create in-memory database
-    db = new SQLiteDatabase(':memory:');
+    db = new DatabaseSync(':memory:');
 
     migrator = new Migrator({
       db,
@@ -35,7 +32,7 @@ describe('Migrator', () => {
 
   afterEach(async () => {
     // Close database
-    if (db.open) {
+    if (db.isOpen) {
       db.close();
     }
 
@@ -56,9 +53,7 @@ describe('Migrator', () => {
 
       // Check lock table
       const lockTable = db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations_lock'"
-        )
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations_lock'")
         .get();
       expect(lockTable).toBeDefined();
     });
@@ -78,9 +73,7 @@ describe('Migrator', () => {
         .get();
       expect(migrationsTable).toBeDefined();
 
-      const lockTable = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='custom_lock'")
-        .get();
+      const lockTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='custom_lock'").get();
       expect(lockTable).toBeDefined();
     });
   });
@@ -174,6 +167,49 @@ describe('Migrator', () => {
       expect(tables).toHaveLength(2);
     });
 
+    it('should support better-sqlite3 databases', async () => {
+      db.close();
+      await fs.rm(migrationsDir, { recursive: true, force: true });
+      await fs.mkdir(migrationsDir);
+
+      await fs.writeFile(
+        path.join(migrationsDir, '001_success.ts'),
+        `
+        export async function up(db) {
+          await db.exec('CREATE TABLE success (id INTEGER PRIMARY KEY)');
+        }
+        export async function down(db) {
+          await db.exec('DROP TABLE success');
+        }
+        `
+      );
+
+      await fs.writeFile(
+        path.join(migrationsDir, '002_fail.ts'),
+        `
+        export async function up(db) {
+          await db.exec('INVALID SQL');
+        }
+        export async function down(db) {}
+        `
+      );
+
+      const betterDb = new Database(':memory:');
+      migrator = new Migrator({
+        db: betterDb,
+        migrationsDir,
+      });
+
+      const result = await migrator.apply();
+      expect(result.success).toBe(false);
+      expect(result.error).toBeInstanceOf(MigrationExecutionError);
+
+      const table = betterDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'success'").get();
+      expect(table).toBeUndefined();
+
+      betterDb.close();
+    });
+
     it('should handle migration errors', async () => {
       await fs.writeFile(
         path.join(migrationsDir, '003_error.ts'),
@@ -192,6 +228,26 @@ describe('Migrator', () => {
       });
     });
 
+    it('should not emit applied events when the migration transaction fails', async () => {
+      await fs.writeFile(
+        path.join(migrationsDir, '003_error.ts'),
+        `
+        export function up(db) {
+          db.exec('INVALID SQL');
+        }
+        export function down(db) {}
+        `
+      );
+
+      const appliedSpy = vi.fn();
+      migrator.on('migration:applied', appliedSpy);
+
+      const result = await migrator.apply();
+
+      expect(result.success).toBe(false);
+      expect(appliedSpy).not.toHaveBeenCalled();
+    });
+
     it('should rollback migrations', async () => {
       // First apply migrations
       await migrator.apply();
@@ -206,6 +262,36 @@ describe('Migrator', () => {
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users', 'posts')")
         .all();
       expect(tables).toHaveLength(0);
+    });
+
+    it('should not report or emit rolled back migrations when rollback transaction fails', async () => {
+      await fs.writeFile(
+        path.join(migrationsDir, '001_users.ts'),
+        `
+        export function up(db) {
+          db.exec('CREATE TABLE users (id INTEGER PRIMARY KEY)');
+        }
+        export function down(db) {
+          throw new Error('Rollback failed');
+        }
+        `
+      );
+
+      await migrator.apply();
+
+      const rollbackSpy = vi.fn();
+      migrator.on('migration:rollback', rollbackSpy);
+
+      const result = await migrator.rollback();
+
+      expect(result.success).toBe(false);
+      expect(result.appliedMigrations).toEqual([]);
+      expect(rollbackSpy).not.toHaveBeenCalled();
+
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('users', 'posts')")
+        .all();
+      expect(tables).toHaveLength(2);
     });
 
     it('should handle concurrent migrations', async () => {
@@ -240,9 +326,7 @@ describe('Migrator', () => {
       expect(result.error).toBeInstanceOf(MigrationExecutionError);
 
       // Verify transaction was rolled back
-      const table = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='test'")
-        .get();
+      const table = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='test'").get();
       expect(table).toBeUndefined();
     });
 
@@ -469,9 +553,9 @@ describe('Migrator', () => {
       await migrator.apply();
 
       // Verify lock is released
-      const lockStatus = db
-        .prepare(`SELECT locked FROM schema_migrations_lock WHERE id = 1`)
-        .get() as { locked: number };
+      const lockStatus = db.prepare(`SELECT locked FROM schema_migrations_lock WHERE id = 1`).get() as {
+        locked: number;
+      };
       expect(lockStatus.locked).toBe(0);
     });
   });
@@ -561,9 +645,7 @@ describe('Migrator', () => {
       expect(result.appliedMigrations).toHaveLength(0);
 
       // No migrations should have been applied in the transaction
-      const tables = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'success'")
-        .all();
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'success'").all();
       expect(tables).toHaveLength(0);
     });
   });
@@ -592,9 +674,7 @@ describe('Migrator', () => {
 
       // Verify all tables were created
       const tables = db
-        .prepare(
-          "SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name LIKE 'table_%'"
-        )
+        .prepare("SELECT count(*) as count FROM sqlite_master WHERE type='table' AND name LIKE 'table_%'")
         .get() as { count: number };
       expect(tables.count).toBe(10);
     });
@@ -606,7 +686,7 @@ describe('Migrator', () => {
         prepare: () => {
           throw new Error('Database error');
         },
-      } as unknown as Database;
+      } as unknown as SqliteDatabase;
 
       const errorMigrator = new Migrator({
         db: invalidDb,
@@ -639,7 +719,7 @@ describe('Migrator', () => {
         transaction: () => {
           throw new Error('Transaction error');
         },
-      } as unknown as Database;
+      } as unknown as SqliteDatabase;
 
       const errorMigrator = new Migrator({
         db: errorDb,

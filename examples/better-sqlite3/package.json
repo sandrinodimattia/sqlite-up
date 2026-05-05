@@ -1,0 +1,15 @@
+{
+  "name": "@sqlite-up/example-better-sqlite3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "sqlite-up": "link:../.."
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0"
+  }
+}

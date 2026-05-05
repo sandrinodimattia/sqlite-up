@@ -1,0 +1,11 @@
+{
+  "name": "@sqlite-up/example-bun-sqlite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "sqlite-up": "link:../.."
+  }
+}
