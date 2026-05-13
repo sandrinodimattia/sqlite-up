@@ -296,18 +296,15 @@ interface MyContext = {
   foo: string
 }
 
-const up = async (db: SqliteDatabase, ctx: MyContext): Promise<void> => {
+export const up: Migration<MyContext>['up'] = async (db: SqliteDatabase, ctx: MyContext): Promise<void> => {
   // Migration code here
   // context is passed as ctx
 };
 
-const down = async (db: SqliteDatabase, ctx: MyContext): Promise<void> => {
+export const down: Migration<MyContext>['down'] = async (db: SqliteDatabase, ctx: MyContext): Promise<void> => {
   // Rollback code here
   // context is passed as ctx
 };
-
-const exports = { up, down } satisfies Migration<MyContext>;
-export { up, down };
 ```
 
 ```typescript
