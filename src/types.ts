@@ -135,21 +135,26 @@ export interface MigratorOptions {
 /**
  * Represents a single migration file/module.
  */
-export interface Migration {
-  /**
-   * Name of the migration (derived from filename)
-   */
-  name: string;
-
+export interface Migration<T = any> {
   /**
    * Function to apply the migration
    */
-  up: (db: SqliteDatabase) => MaybePromise<void>;
+  up: (db: SqliteDatabase, ctx?: T) => MaybePromise<void>;
 
   /**
    * Function to revert the migration
    */
-  down: (db: SqliteDatabase) => MaybePromise<void>;
+  down: (db: SqliteDatabase, ctx?: T) => MaybePromise<void>;
+}
+
+/**
+ * Represents a single migration file/module after being loaded
+ */
+export interface NamedMigration<T = any> extends Migration<T> {
+  /**
+   * Name of the migration (derived from filename)
+   */
+  name: string;
 }
 
 /**
