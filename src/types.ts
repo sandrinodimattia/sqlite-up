@@ -4,6 +4,11 @@
 export type MaybePromise<T> = T | Promise<T>;
 
 /**
+ *  Argument defaults to undefined but is required if T is not undefined
+ */
+export type OptionalArg<T> = T extends undefined ? [] : [value: T];
+
+/**
  * Result returned by SQLite statement execution.
  */
 export interface SqliteRunResult {

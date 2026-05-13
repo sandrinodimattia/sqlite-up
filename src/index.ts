@@ -12,6 +12,7 @@ import type {
   MigrationStatus,
   MigratorOptions,
   SqliteDatabase,
+  OptionalArg,
 } from './types.js';
 
 /**
@@ -21,7 +22,7 @@ import type {
  * const migrator = new Migrator({ db, migrationsDir: 'migrations' });
  * await migrator.apply();
  */
-export class Migrator<T = any> extends EventEmitter {
+export class Migrator<T = undefined> extends EventEmitter {
   /**
    * Driver-specific provider normalized to the sqlite-up database surface.
    */
@@ -260,7 +261,7 @@ export class Migrator<T = any> extends EventEmitter {
    * Apply all pending migrations in a single batch.
    * Returns the names of applied migrations.
    */
-  async apply(ctx?: T): Promise<MigrationResult> {
+  async apply(...args: OptionalArg<T>): Promise<MigrationResult> {
     // Initialize the migrator
     try {
       await this.init();
@@ -306,7 +307,7 @@ export class Migrator<T = any> extends EventEmitter {
         for (const migration of pendingMigrations) {
           try {
             // Apply migration
-            await migration.up(this.db, ctx);
+            await migration.up(this.db, args[0]);
 
             // Record migration
             await this.recordMigration(migration.name, nextBatch);
@@ -337,7 +338,7 @@ export class Migrator<T = any> extends EventEmitter {
    * Roll back the most recent batch of migrations.
    * Returns the names of rolled back migrations.
    */
-  async rollback(ctx?: T): Promise<MigrationResult> {
+  async rollback(...args: OptionalArg<T>): Promise<MigrationResult> {
     // Initialize the migrator
     try {
       await this.init();
@@ -395,7 +396,7 @@ export class Migrator<T = any> extends EventEmitter {
 
           try {
             // Revert migration
-            await migration.down(this.db, ctx);
+            await migration.down(this.db, args[0]);
 
             // Remove migration record
             await this.removeMigration(migration.name, currentBatch);
@@ -500,7 +501,7 @@ export {
 export type {
   BunSqliteDatabase,
   MaybePromise,
-  NamedMigration as Migration,
+  Migration,
   MigrationPlan,
   MigrationRecord,
   MigrationResult,
