@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process';
 import process from 'node:process';
 
+const CI_WORKFLOW = 'ci.yml';
+const CI_BRANCH = 'main';
+const CI_TIMEOUT_MS = 10 * 60 * 1000;
+const CI_POLL_INTERVAL_MS = 15 * 1000;
+
 /**
  * Parses CLI arguments for the release helper.
  *
@@ -51,11 +56,17 @@ export function createReleasePlan(version) {
 /**
  * Runs the release flow.
  *
- * @param {{ dryRun: boolean, log?: (message: string) => void, run?: typeof runCommand, version: string }} options
+ * @param {{
+ * dryRun: boolean,
+ * log?: (message: string) => void,
+ * run?: typeof runCommand,
+ * sleep?: typeof sleep,
+ * version: string
+ * }} options
  * Release options.
  * @returns {Promise<void>} Resolves when the release flow finishes.
  */
-export async function release({ dryRun, log = console.log, run = runCommand, version }) {
+export async function release({ dryRun, log = console.log, run = runCommand, sleep = delay, version }) {
   const plan = createReleasePlan(version);
 
   for (const [command, args] of plan) {
@@ -91,6 +102,123 @@ export async function release({ dryRun, log = console.log, run = runCommand, ver
     if (result.status !== 0 && !expectedMissingResource) {
       throw new Error(`Command failed: ${formatCommand(command, args)}`);
     }
+
+    if (command === 'git' && args.join(' ') === 'push') {
+      const commitSha = await getCurrentCommitSha({ run });
+      await waitForSuccessfulCi({ branch: CI_BRANCH, commitSha, log, run, sleep, workflow: CI_WORKFLOW });
+    }
+  }
+}
+
+/**
+ * Gets the current HEAD commit SHA.
+ *
+ * @param {{ run: typeof runCommand }} options Command runner.
+ * @returns {Promise<string>} Current HEAD commit SHA.
+ */
+async function getCurrentCommitSha({ run }) {
+  const result = await run('git', ['rev-parse', 'HEAD']);
+
+  if (result.status !== 0) {
+    throw new Error('Command failed: git rev-parse HEAD');
+  }
+
+  return result.stdout.trim();
+}
+
+/**
+ * Waits for the GitHub Actions CI workflow to succeed on a specific commit.
+ *
+ * @param {{
+ * branch?: string,
+ * commitSha: string,
+ * log?: (message: string) => void,
+ * now?: () => number,
+ * pollIntervalMs?: number,
+ * run?: typeof runCommand,
+ * sleep?: typeof sleep,
+ * timeoutMs?: number,
+ * workflow?: string
+ * }} options CI wait options.
+ * @returns {Promise<void>} Resolves after CI succeeds.
+ */
+export async function waitForSuccessfulCi({
+  branch = CI_BRANCH,
+  commitSha,
+  log = console.log,
+  now = Date.now,
+  pollIntervalMs = CI_POLL_INTERVAL_MS,
+  run = runCommand,
+  sleep = delay,
+  timeoutMs = CI_TIMEOUT_MS,
+  workflow = CI_WORKFLOW,
+}) {
+  const startedAt = now();
+
+  while (now() - startedAt <= timeoutMs) {
+    const result = await run('gh', [
+      'run',
+      'list',
+      '--workflow',
+      workflow,
+      '--branch',
+      branch,
+      '--commit',
+      commitSha,
+      '--event',
+      'push',
+      '--limit',
+      '10',
+      '--json',
+      'databaseId,status,conclusion,url',
+    ]);
+
+    if (result.status !== 0) {
+      throw new Error(`Command failed: gh run list --workflow ${workflow} --commit ${commitSha}`);
+    }
+
+    const runInfo = parseCiRun(result.stdout, commitSha);
+
+    if (!runInfo) {
+      log(`Waiting for CI run for ${commitSha} to appear...`);
+      await sleep(pollIntervalMs);
+      continue;
+    }
+
+    if (runInfo.status === 'completed' && runInfo.conclusion === 'success') {
+      log(`CI passed for ${commitSha}: ${runInfo.url}`);
+      return;
+    }
+
+    if (runInfo.status === 'completed') {
+      throw new Error(`CI failed for ${commitSha}: ${runInfo.conclusion ?? 'unknown'} (${runInfo.url})`);
+    }
+
+    log(`Waiting for CI run ${runInfo.databaseId} on ${commitSha}: ${runInfo.status}`);
+    await sleep(pollIntervalMs);
+  }
+
+  throw new Error(`Timed out waiting for CI to pass for ${commitSha}.`);
+}
+
+/**
+ * Parses GitHub Actions run list output and returns the newest matching run.
+ *
+ * @param {string} stdout JSON output from gh run list.
+ * @param {string} commitSha Commit SHA used in the query.
+ * @returns {{ conclusion?: string, databaseId: number, status: string, url: string } | undefined} CI run metadata.
+ */
+function parseCiRun(stdout, commitSha) {
+  try {
+    const runs = JSON.parse(stdout);
+
+    if (!Array.isArray(runs)) {
+      throw new TypeError('Expected an array of GitHub Actions runs.');
+    }
+
+    return runs[0];
+  } catch (error) {
+    throw new Error(`Failed to parse CI run list for ${commitSha}: ${error instanceof Error ? error.message : error}`);
   }
 }
 
@@ -110,6 +238,16 @@ function runCommand(command, args) {
     child.stdout.on('data', (chunk) => stdout.push(chunk));
     child.on('close', (status) => resolve({ status: status ?? 1, stdout: stdout.join('') }));
   });
+}
+
+/**
+ * Sleeps for a fixed duration.
+ *
+ * @param {number} ms Milliseconds to wait.
+ * @returns {Promise<void>} Resolves after the delay.
+ */
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
