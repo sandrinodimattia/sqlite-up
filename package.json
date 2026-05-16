@@ -1,7 +1,7 @@
 {
   "name": "sqlite-up",
   "author": "Sandrino Di Mattia",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A lightweight SQLite migration system for Node.js and Bun",
   "type": "module",
   "license": "MIT",
