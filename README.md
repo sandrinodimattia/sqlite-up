@@ -283,6 +283,48 @@ Files should be named using the format: `XXX_description.ts` where XXX is a sequ
 
 The migrator loads migration files with dynamic `import()`. Bun can load TypeScript migrations directly. In Node.js, run your migration script with a TypeScript runtime such as `tsx`, or compile migrations to JavaScript and use `.js` migration files. You can also customize loaded extensions with `fileExtensions`; `.d.ts` files are always ignored.
 
+### Providing Context
+
+A second argument can be provided to migration file functions in order to supply your own context. Context should be passed in `apply` or `rollback`.
+
+To enforce type correctness, type the `Migrator` and use `satisfies` in your migration files:
+
+```typescript
+import type { SqliteDatabase, Migration } from 'sqlite-up';
+
+interface MyContext {
+  foo: string;
+}
+
+export const up: Migration<MyContext>['up'] = async (db: SqliteDatabase, ctx: MyContext): Promise<void> => {
+  // Migration code here
+  // context is passed as ctx
+};
+
+export const down: Migration<MyContext>['down'] = async (db: SqliteDatabase, ctx: MyContext): Promise<void> => {
+  // Rollback code here
+  // context is passed as ctx
+};
+```
+
+```typescript
+import { DatabaseSync } from 'node:sqlite';
+import { Migrator } from 'sqlite-up';
+
+async function main() {
+  const db = new DatabaseSync('myapp.db');
+
+  const migrator = new Migrator<MyContext>({
+    db,
+    migrationsDir: './migrations',
+  });
+
+  const result = await migrator.apply({ foo: 'bar' });
+}
+
+main().catch(console.error);
+```
+
 ## Error Handling
 
 ```typescript
