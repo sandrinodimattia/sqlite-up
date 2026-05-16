@@ -292,8 +292,8 @@ To enforce type correctness, type the `Migrator` and use `satisfies` in your mig
 ```typescript
 import type { SqliteDatabase, Migration } from 'sqlite-up';
 
-interface MyContext = {
-  foo: string
+interface MyContext {
+  foo: string;
 }
 
 export const up: Migration<MyContext>['up'] = async (db: SqliteDatabase, ctx: MyContext): Promise<void> => {
@@ -319,7 +319,7 @@ async function main() {
     migrationsDir: './migrations',
   });
 
-  const result = await migrator.apply({foo: 'bar'});
+  const result = await migrator.apply({ foo: 'bar' });
 }
 
 main().catch(console.error);

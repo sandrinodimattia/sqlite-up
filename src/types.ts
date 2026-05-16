@@ -4,9 +4,10 @@
 export type MaybePromise<T> = T | Promise<T>;
 
 /**
- *  Argument defaults to undefined but is required if T is not undefined
+ * Optional context argument tuple. Context is omitted by default and required
+ * when a migrator or migration is typed with a context value.
  */
-export type OptionalArg<T> = T extends undefined ? [] : [value: T];
+export type ContextArg<T> = [T] extends [undefined] ? [] : [ctx: T];
 
 /**
  * Result returned by SQLite statement execution.
@@ -140,26 +141,21 @@ export interface MigratorOptions {
 /**
  * Represents a single migration file/module.
  */
-export interface Migration<T = any> {
-  /**
-   * Function to apply the migration
-   */
-  up: (db: SqliteDatabase, ctx?: T) => MaybePromise<void>;
-
-  /**
-   * Function to revert the migration
-   */
-  down: (db: SqliteDatabase, ctx?: T) => MaybePromise<void>;
-}
-
-/**
- * Represents a single migration file/module after being loaded
- */
-export interface NamedMigration<T = any> extends Migration<T> {
+export interface Migration<T = undefined> {
   /**
    * Name of the migration (derived from filename)
    */
   name: string;
+
+  /**
+   * Function to apply the migration
+   */
+  up: (db: SqliteDatabase, ...args: ContextArg<T>) => MaybePromise<void>;
+
+  /**
+   * Function to revert the migration
+   */
+  down: (db: SqliteDatabase, ...args: ContextArg<T>) => MaybePromise<void>;
 }
 
 /**

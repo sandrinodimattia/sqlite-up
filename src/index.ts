@@ -4,15 +4,15 @@ import path from 'node:path';
 import { MigrationError, MigrationExecutionError, MigrationFileError, MigrationLockError } from './errors.js';
 import { createSqliteProvider, type SqliteProvider } from './providers/index.js';
 import type {
+  ContextArg,
   MaybePromise,
-  NamedMigration,
+  Migration,
   MigrationPlan,
   MigrationRecord,
   MigrationResult,
   MigrationStatus,
   MigratorOptions,
   SqliteDatabase,
-  OptionalArg,
 } from './types.js';
 
 /**
@@ -51,7 +51,7 @@ export class Migrator<T = undefined> extends EventEmitter {
   /**
    * Migration modules loaded from disk in execution order.
    */
-  private migrations: NamedMigration<T>[] = [];
+  private migrations: Migration<T>[] = [];
 
   /**
    * Whether internal tables and migration files have already been initialized.
@@ -142,13 +142,13 @@ export class Migrator<T = undefined> extends EventEmitter {
         })
         .sort();
 
-      const loadedMigrations: NamedMigration<T>[] = [];
+      const loadedMigrations: Migration<T>[] = [];
       for (const file of migrationFiles) {
         const fullPath = path.join(this.migrationsDir, file);
 
         let imported: {
-          up: (db: SqliteDatabase) => MaybePromise<void>;
-          down: (db: SqliteDatabase) => MaybePromise<void>;
+          up: Migration<T>['up'];
+          down: Migration<T>['down'];
         };
 
         try {
@@ -261,7 +261,7 @@ export class Migrator<T = undefined> extends EventEmitter {
    * Apply all pending migrations in a single batch.
    * Returns the names of applied migrations.
    */
-  async apply(...args: OptionalArg<T>): Promise<MigrationResult> {
+  async apply(...args: ContextArg<T>): Promise<MigrationResult> {
     // Initialize the migrator
     try {
       await this.init();
@@ -307,7 +307,7 @@ export class Migrator<T = undefined> extends EventEmitter {
         for (const migration of pendingMigrations) {
           try {
             // Apply migration
-            await migration.up(this.db, args[0]);
+            await migration.up(this.db, ...args);
 
             // Record migration
             await this.recordMigration(migration.name, nextBatch);
@@ -338,7 +338,7 @@ export class Migrator<T = undefined> extends EventEmitter {
    * Roll back the most recent batch of migrations.
    * Returns the names of rolled back migrations.
    */
-  async rollback(...args: OptionalArg<T>): Promise<MigrationResult> {
+  async rollback(...args: ContextArg<T>): Promise<MigrationResult> {
     // Initialize the migrator
     try {
       await this.init();
@@ -396,7 +396,7 @@ export class Migrator<T = undefined> extends EventEmitter {
 
           try {
             // Revert migration
-            await migration.down(this.db, args[0]);
+            await migration.down(this.db, ...args);
 
             // Remove migration record
             await this.removeMigration(migration.name, currentBatch);
@@ -500,6 +500,7 @@ export {
 } from './errors.js';
 export type {
   BunSqliteDatabase,
+  ContextArg,
   MaybePromise,
   Migration,
   MigrationPlan,

@@ -264,6 +264,47 @@ describe('Migrator', () => {
       expect(tables).toHaveLength(0);
     });
 
+    it('should pass typed context to apply and rollback migrations', async () => {
+      await fs.writeFile(
+        path.join(migrationsDir, '003_context.ts'),
+        `
+        export function up(db, ctx) {
+          if (ctx.prefix !== 'test') {
+            throw new Error('Unexpected apply context');
+          }
+
+          db.exec('CREATE TABLE context_values (value TEXT)');
+          db.prepare('INSERT INTO context_values (value) VALUES (?)').run(ctx.prefix);
+        }
+
+        export function down(db, ctx) {
+          if (ctx.prefix !== 'rollback') {
+            throw new Error('Unexpected rollback context');
+          }
+
+          db.exec('DROP TABLE context_values');
+        }
+        `
+      );
+
+      const contextMigrator = new Migrator<{ prefix: string }>({
+        db,
+        migrationsDir,
+      });
+
+      const applyResult = await contextMigrator.apply({ prefix: 'test' });
+      expect(applyResult.success).toBe(true);
+
+      const row = db.prepare('SELECT value FROM context_values').get() as { value: string };
+      expect(row.value).toBe('test');
+
+      const rollbackResult = await contextMigrator.rollback({ prefix: 'rollback' });
+      expect(rollbackResult.success).toBe(true);
+
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='context_values'").all();
+      expect(tables).toHaveLength(0);
+    });
+
     it('should not report or emit rolled back migrations when rollback transaction fails', async () => {
       await fs.writeFile(
         path.join(migrationsDir, '001_users.ts'),
