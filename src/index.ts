@@ -144,7 +144,7 @@ export class Migrator<T = undefined> extends EventEmitter {
 
       const loadedMigrations: Migration<T>[] = [];
       for (const file of migrationFiles) {
-        const fullPath = path.join(this.migrationsDir, file);
+        const fullPath = await fs.realpath(path.join(this.migrationsDir, file));
 
         let imported: {
           up: Migration<T>['up'];
